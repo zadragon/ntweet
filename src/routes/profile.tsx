@@ -1,13 +1,27 @@
-import { updateProfile } from "firebase/auth";
-import { collection, getDocs, limit, query, where } from "firebase/firestore";
+import { Unsubscribe, updateProfile } from "firebase/auth";
+import {
+  collection,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  where,
+} from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { useEffect, useState } from "react";
 import styled from "styled-components";
+import { ITweet } from "../components/timeline";
+import Tweet from "../components/tweet";
 import { auth, db, storage } from "../firebase";
 
 const Profile = () => {
   const user = auth.currentUser;
   const [avatar, setAvatar] = useState(user?.photoURL);
+  const [tweets, setTweets] = useState<ITweet[]>([]);
+  const [nickChangeMode, setNickChangeMode] = useState(false);
+  const [nickname, setNickname] = useState("");
+  let unsubscribe: Unsubscribe | null = null;
+
   const onAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const { files } = e.target;
     if (!user) return;
@@ -22,20 +36,52 @@ const Profile = () => {
       });
     }
   };
+  const onNickChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNickname(e.target.value);
+  };
+
+  const onNickSubmit = async () => {
+    await updateProfile(user, {
+      displayName: nickname,
+    })
+      .then(() => {
+        setNickname("");
+        setNickChangeMode(false);
+      })
+      .catch((error) => {
+        console.log(error);
+      });
+  };
+
   const fetchTweets = async () => {
     const tweetQuery = query(
       collection(db, "tweets"),
       where("userId", "==", user?.uid),
+      orderBy("createdAt", "desc"),
       limit(25)
     );
-    const snapshot = await getDocs(tweetQuery);
-    const tweets = snapshot.docs.map((doc) => {
-      const { tweet, createdAt, userId, username, photo } = doc.data();
+    unsubscribe = await onSnapshot(tweetQuery, (snapshot) => {
+      const tweets = snapshot.docs.map((doc) => {
+        const { tweet, createdAt, userId, username, photo } = doc.data();
+        return {
+          tweet,
+          createdAt,
+          userId,
+          username,
+          photo,
+          id: doc.id,
+        };
+      });
+      setTweets(tweets);
     });
   };
   useEffect(() => {
     fetchTweets();
+    return () => {
+      unsubscribe && unsubscribe();
+    };
   }, []);
+
   return (
     <Wrapper>
       <AvatarUpload htmlFor="avatar">
@@ -58,7 +104,38 @@ const Profile = () => {
         id="avatar"
         accept="image/*"
       />
-      <Name>{user?.displayName ?? "이름없음"}</Name>
+      <Name>
+        <div>{user?.displayName ?? "이름없음"} </div>
+        <div>
+          {!nickChangeMode && (
+            <button
+              type="button"
+              onClick={() => setNickChangeMode(!nickChangeMode)}
+            >
+              닉네임 변경하기
+            </button>
+          )}
+        </div>
+        {nickChangeMode ? (
+          <>
+            <input
+              type="text"
+              placeholder="변경할 닉네임을 입력하세요."
+              onChange={onNickChange}
+              value={nickname}
+            />
+            <button onClick={onNickSubmit}>변경</button>
+            <button onClick={() => setNickChangeMode(!nickChangeMode)}>
+              취소
+            </button>
+          </>
+        ) : null}
+      </Name>
+      <Tweets>
+        {tweets.map((tweet) => (
+          <Tweet key={tweet.id} {...tweet} />
+        ))}
+      </Tweets>
     </Wrapper>
   );
 };
@@ -83,7 +160,12 @@ const AvatarUpload = styled.label`
     width: 50px;
   }
 `;
-
+const Tweets = styled.div`
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 10px;
+`;
 const AvatarImg = styled.img`
   width: 100%;
 `;
@@ -92,6 +174,7 @@ const AvatarInput = styled.input`
 `;
 const Name = styled.span`
   font-size: 22px;
+  text-align: center;
 `;
 
 export default Profile;
